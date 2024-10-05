@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: taytelar-service-account
+      imagePullSecrets:
+        - name: ecr-secret  # Proper image pull secret to access ECR
+      volumes:
+        - name: secrets-store-inline
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "taytelar-secrets-provider"  # Changed to the updated SecretProviderClass name
+        - name: backend-storage
+          persistentVolumeClaim:
+            claimName: backend-pvc
+      containers:
+        - name: backend
+          image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ .Values.backend.service.port }}
+          volumeMounts:
+            - name: secrets-store-inline
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
+          env:
+            # PostgreSQL values
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres-service:5432/{{ .Values.database.postgres.dbname }}
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+
+            # MongoDB values
+            - name: SPRING_DATA_MONGODB_URI
+              value: mongodb://mongo-service:27017/{{ .Values.database.mongodb.dbname }}
+
+            # Razorpay Credentials
+            - name: RAZORPAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: razorpay-credentials
+                  key: api.key.id
+            - name: RAZORPAY_API_KEY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: razorpay-credentials
+                  key: api.key.secret
+
+
+            # Fast2SMS Credentials
+            - name: FAST2SMS_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: fast2sms-api
+                  key: api.key
+            - name: FAST2SMS_SMS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: fast2sms-api
+                  key: sms.url
+
+
+            # AWS credentials and bucket
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: aws.access.key.id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: aws.access.key.secret
+            - name: AWS_BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: aws-bucket
+                  key: ""
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.backend.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ .Values.backend.service.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
